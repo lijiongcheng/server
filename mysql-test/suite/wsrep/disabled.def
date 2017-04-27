@@ -1,2 +1,2 @@
 foreign_key : MDEV-7915
-binlog_format : MDEV-11532
+binlog_format : MDEV-12017
