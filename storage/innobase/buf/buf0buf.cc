@@ -68,6 +68,10 @@ Created 11/5/1995 Heikki Tuuri
 #include "lzo/lzo1x.h"
 #endif
 
+#ifdef HAVE_SNAPPY
+#include "snappy-c.h"
+#endif
+
 /*
 		IMPLEMENTATION OF THE BUFFER POOL
 		=================================
@@ -6032,9 +6036,16 @@ buf_pool_reserve_tmp_slot(
 	/* For page compressed tables allocate temporary memory for
 	compression/decompression */
 	if (compressed && free_slot->comp_buf_free == NULL) {
-		free_slot->comp_buf_free = static_cast<byte *>(ut_malloc(UNIV_PAGE_SIZE*2));
+		ulint size = UNIV_PAGE_SIZE*2;
+#ifdef HAVE_SNAPPY
+		/* Snappy compression library requires additional memory for
+		both compression and decompression, thus modify the actual
+		allocation size based on that. */
+		size = snappy_max_compressed_length(size);
+#endif
+		free_slot->comp_buf_free = static_cast<byte *>(ut_malloc(size));
 		free_slot->comp_buf = static_cast<byte *>(ut_align(free_slot->comp_buf_free, UNIV_PAGE_SIZE));
-		memset(free_slot->comp_buf_free, 0, UNIV_PAGE_SIZE *2);
+		memset(free_slot->comp_buf_free, 0, size);
 #ifdef HAVE_LZO
 		free_slot->lzo_mem = static_cast<byte *>(ut_malloc(LZO1X_1_15_MEM_COMPRESS));
 		memset(free_slot->lzo_mem, 0, LZO1X_1_15_MEM_COMPRESS);

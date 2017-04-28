@@ -121,7 +121,16 @@ fil_compress_page(
 
 	if (!out_buf) {
 		allocated = true;
-		out_buf = static_cast<byte *>(ut_malloc(UNIV_PAGE_SIZE));
+		ulint size = UNIV_PAGE_SIZE;
+#ifdef HAVE_SNAPPY
+		/* Snappy compression library requires additional memory for
+		both compression and decompression, thus modify the actual
+		allocation size based on that. */
+		size = snappy_max_compressed_length(size);
+#endif
+
+		out_buf = static_cast<byte *>(ut_malloc(size));
+
 #ifdef HAVE_LZO
 		if (comp_method == PAGE_LZO_ALGORITHM) {
 			lzo_mem = static_cast<byte *>(ut_malloc(LZO1X_1_15_MEM_COMPRESS));
@@ -163,6 +172,7 @@ fil_compress_page(
 	switch(comp_method) {
 #ifdef HAVE_LZ4
 	case PAGE_LZ4_ALGORITHM:
+
 #ifdef HAVE_LZ4_COMPRESS_DEFAULT
 		err = LZ4_compress_default((const char *)buf,
 			(char *)out_buf+header_len, len, write_size);
@@ -288,6 +298,7 @@ fil_compress_page(
 	case PAGE_SNAPPY_ALGORITHM:
 	{
 		snappy_status cstatus;
+		write_size = snappy_max_compressed_length(UNIV_PAGE_SIZE);
 
 		cstatus = snappy_compress(
 			(const char *)buf,
@@ -378,9 +389,14 @@ fil_compress_page(
 	{
 		byte *comp_page;
 		byte *uncomp_page;
+		ulint size = UNIV_PAGE_SIZE;
 
-		comp_page = static_cast<byte *>(ut_malloc(UNIV_PAGE_SIZE));
-		uncomp_page = static_cast<byte *>(ut_malloc(UNIV_PAGE_SIZE));
+#ifdef HAVE_SNAPPY
+		size = snappy_max_compressed_length(size);
+#endif
+
+		comp_page = static_cast<byte *>(ut_malloc(size));
+		uncomp_page = static_cast<byte *>(ut_malloc(size));
 		memcpy(comp_page, out_buf, UNIV_PAGE_SIZE);
 
 		fil_decompress_page(uncomp_page, comp_page, ulong(len), NULL);
@@ -496,8 +512,15 @@ fil_decompress_page(
 
 	// If no buffer was given, we need to allocate temporal buffer
 	if (page_buf == NULL) {
-		in_buf = static_cast<byte *>(ut_malloc(UNIV_PAGE_SIZE));
-		memset(in_buf, 0, UNIV_PAGE_SIZE);
+		ulint size = UNIV_PAGE_SIZE;
+#ifdef HAVE_SNAPPY
+		/* Snappy compression library requires additional memory for
+		both compression and decompression, thus modify the actual
+		allocation size based on that. */
+		size = snappy_max_compressed_length(size);
+#endif
+		in_buf = static_cast<byte *>(ut_malloc(size));
+		memset(in_buf, 0, size);
 	} else {
 		in_buf = page_buf;
 	}
@@ -509,7 +532,7 @@ fil_decompress_page(
 		 ptype != FIL_PAGE_PAGE_COMPRESSED_ENCRYPTED)) {
 		ib_logf(IB_LOG_LEVEL_ERROR,
 			"Corruption: We try to uncompress corrupted page"
-			" CRC %lu type %lu len %lu.",
+			" CRC " ULINTPF " type " ULINTPF " len " ULINTPF ".",
 			mach_read_from_4(buf+FIL_PAGE_SPACE_OR_CHKSUM),
 			mach_read_from_2(buf+FIL_PAGE_TYPE), len);
 
@@ -533,7 +556,7 @@ fil_decompress_page(
 	if (actual_size == 0 || actual_size > UNIV_PAGE_SIZE) {
 		ib_logf(IB_LOG_LEVEL_ERROR,
 			"Corruption: We try to uncompress corrupted page"
-			" actual size %lu compression %s.",
+			" actual size " ULINTPF " compression %s.",
 			actual_size, fil_get_compression_alg_name(compression_alg));
 		fflush(stderr);
 		if (return_error) {
@@ -548,12 +571,9 @@ fil_decompress_page(
 		*write_size = actual_size;
 	}
 
-#ifdef UNIV_PAGECOMPRESS_DEBUG
-	ib_logf(IB_LOG_LEVEL_INFO,
-		"Preparing for decompress for len %lu\n",
-		actual_size);
-#endif /* UNIV_PAGECOMPRESS_DEBUG */
-
+	DBUG_PRINT("compress",
+		   ("Preparing for decompress for len " ULINTPF ".",
+		   actual_size));
 
 	switch(compression_alg) {
 	case PAGE_ZLIB_ALGORITHM:
@@ -565,7 +585,7 @@ fil_decompress_page(
 			ib_logf(IB_LOG_LEVEL_ERROR,
 				"Corruption: Page is marked as compressed"
 				" but uncompress failed with error %d "
-				" size %lu len %lu.",
+				" size " ULINTPF " len " ULINTPF ".",
 				err, actual_size, len);
 
 			fflush(stderr);
@@ -584,9 +604,10 @@ fil_decompress_page(
 		if (err != (int)actual_size) {
 			ib_logf(IB_LOG_LEVEL_ERROR,
 				"Corruption: Page is marked as compressed"
-				" but decompression read only %d bytes "
-				" size %lu len %lu.",
+				" but uncompress failed with error %d "
+				" size " ULINTPF " len " ULINTPF ".",
 				err, actual_size, len);
+
 			fflush(stderr);
 
 			if (return_error) {
@@ -605,9 +626,10 @@ fil_decompress_page(
 		if (err != LZO_E_OK || (olen == 0 || olen > UNIV_PAGE_SIZE)) {
 			ib_logf(IB_LOG_LEVEL_ERROR,
 				"Corruption: Page is marked as compressed"
-				" but decompression read only %ld bytes"
-				" size %lu len %lu.",
-				olen, actual_size, len);
+				" but uncompress failed with error %d "
+				" size " ULINTPF " len " ULINTPF ".",
+				err, actual_size, len);
+
 			fflush(stderr);
 
 			if (return_error) {
@@ -642,7 +664,7 @@ fil_decompress_page(
 			ib_logf(IB_LOG_LEVEL_ERROR,
 				"Corruption: Page is marked as compressed"
 				" but decompression read only %ld bytes"
-				" size %lu len %lu.",
+				" size " ULINTPF "len " ULINTPF ".",
 				dst_pos, actual_size, len);
 			fflush(stderr);
 
@@ -671,7 +693,7 @@ fil_decompress_page(
 			ib_logf(IB_LOG_LEVEL_ERROR,
 				"Corruption: Page is marked as compressed"
 				" but decompression read only %du bytes"
-				" size %lu len %lu err %d.",
+				" size " ULINTPF " len " ULINTPF " err %d.",
 				dst_pos, actual_size, len, err);
 			fflush(stderr);
 
@@ -687,7 +709,7 @@ fil_decompress_page(
 	case PAGE_SNAPPY_ALGORITHM:
 	{
 		snappy_status cstatus;
-		ulint olen = 0;
+		ulint olen = snappy_max_compressed_length(UNIV_PAGE_SIZE);
 
 		cstatus = snappy_uncompress(
 			(const char *)(buf+header_len),
@@ -695,11 +717,11 @@ fil_decompress_page(
 			(char *)in_buf,
 			(size_t*)&olen);
 
-		if (cstatus != SNAPPY_OK || (olen == 0 || olen > UNIV_PAGE_SIZE)) {
+		if (cstatus != SNAPPY_OK || olen != UNIV_PAGE_SIZE) {
 			ib_logf(IB_LOG_LEVEL_ERROR,
 				"Corruption: Page is marked as compressed"
-				" but decompression read only %lu bytes"
-				" size %lu len %lu err %d.",
+				" but decompression read only " ULINTPF " bytes"
+				" size " ULINTPF " len " ULINTPF " err %d.",
 				olen, actual_size, len, (int)cstatus);
 			fflush(stderr);
 
@@ -708,6 +730,7 @@ fil_decompress_page(
 			}
 			ut_error;
 		}
+
 		break;
 	}
 #endif /* HAVE_SNAPPY */
@@ -734,7 +757,7 @@ fil_decompress_page(
 
 error_return:
 	// Need to free temporal buffer if no buffer was given
-	if (page_buf == NULL) {
+	if (page_buf != in_buf) {
 		ut_free(in_buf);
 	}
 }

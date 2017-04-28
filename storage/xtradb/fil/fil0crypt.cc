@@ -39,6 +39,10 @@ Modified           Jan Lindström jan.lindstrom@mariadb.com
 #include "ha_prototypes.h" // IB_LOG_
 #include <my_crypt.h>
 
+#ifdef HAVE_SNAPPY
+#include "snappy-c.h"
+#endif
+
 /** Mutex for keys */
 static ib_mutex_t fil_crypt_key_mutex;
 
@@ -699,8 +703,15 @@ fil_space_encrypt(
 		ulint size = (zip_size) ? zip_size : UNIV_PAGE_SIZE;
 
 		if (page_compressed_encrypted) {
-			comp_mem = (byte *)malloc(UNIV_PAGE_SIZE);
-			uncomp_mem = (byte *)malloc(UNIV_PAGE_SIZE);
+			ulint size = UNIV_PAGE_SIZE;
+#ifdef HAVE_SNAPPY
+			/* Snappy compression library requires additional memory for
+			both compression and decompression, thus modify the actual
+			allocation size based on that. */
+			size = snappy_max_compressed_length(size);
+#endif
+			comp_mem = (byte *)malloc(size);
+			uncomp_mem = (byte *)malloc(size);
 			memcpy(comp_mem, src_frame, UNIV_PAGE_SIZE);
 			fil_decompress_page(uncomp_mem, comp_mem,
 					    srv_page_size, NULL);
