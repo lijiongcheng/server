@@ -2278,7 +2278,7 @@ for concurrency control.
 @param[in]	silent	whether to silently ignore missing tablespaces
 @return	the tablespace
 @retval	NULL if missing or being deleted or truncated */
-inline
+UNIV_INTERN
 fil_space_t*
 fil_space_acquire_low(ulint id, bool silent)
 {
